@@ -2,23 +2,31 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
 
-export default function LoginPage() {
+export default function ResetPasswordPage() {
   const router = useRouter()
-  const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
-  const [error, setError] = useState('')
+  const [confirm, setConfirm] = useState('')
   const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setError('')
-    setLoading(true)
 
+    if (password.length < 8) {
+      setError('Hasło musi mieć co najmniej 8 znaków.')
+      return
+    }
+    if (password !== confirm) {
+      setError('Hasła nie są identyczne.')
+      return
+    }
+
+    setLoading(true)
     const supabase = createClient()
-    const { error } = await supabase.auth.signInWithPassword({ email, password })
+    const { error } = await supabase.auth.updateUser({ password })
 
     if (error) {
       setError(error.message)
@@ -42,8 +50,8 @@ export default function LoginPage() {
             </div>
             <span className="text-white font-semibold text-xl">Planner</span>
           </div>
-          <h1 className="text-2xl font-bold text-white">Welcome back</h1>
-          <p className="text-slate-400 mt-1 text-sm">Sign in to your Rocksoft account</p>
+          <h1 className="text-2xl font-bold text-white">Nowe hasło</h1>
+          <p className="text-slate-400 mt-1 text-sm">Wpisz nowe hasło do swojego konta</p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -54,28 +62,24 @@ export default function LoginPage() {
           )}
 
           <div>
-            <label className="block text-sm font-medium text-slate-300 mb-1.5">Email</label>
+            <label className="block text-sm font-medium text-slate-300 mb-1.5">Nowe hasło</label>
             <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="you@rocksoft.pl"
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="••••••••"
               required
+              minLength={8}
               className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2.5 text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-sm transition"
             />
           </div>
 
           <div>
-            <div className="flex items-center justify-between mb-1.5">
-              <label className="block text-sm font-medium text-slate-300">Password</label>
-              <Link href="/auth/forgot-password" className="text-xs text-indigo-400 hover:text-indigo-300 transition">
-                Zapomniałem hasła
-              </Link>
-            </div>
+            <label className="block text-sm font-medium text-slate-300 mb-1.5">Powtórz hasło</label>
             <input
               type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
+              value={confirm}
+              onChange={(e) => setConfirm(e.target.value)}
               placeholder="••••••••"
               required
               className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2.5 text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-sm transition"
@@ -87,16 +91,9 @@ export default function LoginPage() {
             disabled={loading}
             className="w-full bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium py-2.5 rounded-lg transition text-sm"
           >
-            {loading ? 'Signing in…' : 'Sign in'}
+            {loading ? 'Zapisywanie…' : 'Ustaw nowe hasło'}
           </button>
         </form>
-
-        <p className="mt-6 text-center text-sm text-slate-500">
-          Don&apos;t have an account?{' '}
-          <Link href="/auth/register" className="text-indigo-400 hover:text-indigo-300 transition">
-            Register
-          </Link>
-        </p>
       </div>
     </div>
   )
