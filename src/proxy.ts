@@ -40,7 +40,7 @@ export async function proxy(request: NextRequest) {
     return NextResponse.redirect(url)
   }
 
-  if (user && isAuthRoute) {
+  if (user && isAuthRoute && pathname !== '/auth/reset-password') {
     const url = request.nextUrl.clone()
     url.pathname = '/timeline'
     return NextResponse.redirect(url)

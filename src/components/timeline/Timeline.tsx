@@ -1,28 +1,27 @@
 'use client'
 
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect, useMemo } from 'react'
 import {
   format,
-  addWeeks,
-  subWeeks,
+  addDays,
+  subDays,
+  eachDayOfInterval,
+  differenceInCalendarDays,
   isToday,
   isWeekend,
 } from 'date-fns'
-import { getViewDays, calcUtilization, getAllocationStyle, hexToRgba, cn } from '@/lib/utils'
+import { calcUtilization, getAllocationStyle, hexToRgba, cn } from '@/lib/utils'
 import { ROLES } from '@/components/ui/RoleSelect'
 import MonthPicker from '@/components/ui/MonthPicker'
 import PeopleFilter from '@/components/ui/PeopleFilter'
-import type { AllocationWithProject, TeamMember, Project, TimeOff, ViewMode } from '@/lib/types'
+import type { AllocationWithProject, TeamMember, Project, TimeOff } from '@/lib/types'
 import { TIME_OFF_LABELS } from '@/lib/types'
 import AllocationModal from './AllocationModal'
 import TimeOffModal from './TimeOffModal'
 
-const DAY_WIDTH_MAP: Record<ViewMode, number> = {
-  week: 52,
-  '3weeks': 44,
-  month: 36,
-  quarter: 26,
-}
+const DAY_WIDTH = 44
+const DAYS_BEFORE = 180  // 6 miesięcy wstecz
+const DAYS_AFTER  = 548  // ~18 miesięcy do przodu
 
 const LANE_HEIGHT = 28   // px per allocation block
 const LANE_GAP = 4       // px between lanes
@@ -78,10 +77,13 @@ interface TimelineProps {
 }
 
 export default function Timeline({ people, projects, allocations, timeOffs, onRefresh }: TimelineProps) {
-  const [anchor, setAnchor] = useState(new Date())
-  const [viewMode, setViewMode] = useState<ViewMode>('3weeks')
   const [roleFilter, setRoleFilter] = useState<string | null>(null)
   const [selectedPeopleIds, setSelectedPeopleIds] = useState<string[]>([])
+  const [visibleDate, setVisibleDate] = useState(new Date())
+
+  // Fixed base date — never changes, whole range rendered once
+  const baseDate = useMemo(() => subDays(new Date(), DAYS_BEFORE), [])
+  const totalDays = DAYS_BEFORE + DAYS_AFTER + 1
   const [modal, setModal] = useState<{
     open: boolean
     allocation?: AllocationWithProject | null
@@ -96,8 +98,54 @@ export default function Timeline({ people, projects, allocations, timeOffs, onRe
   }>({ open: false })
   const scrollRef = useRef<HTMLDivElement>(null)
 
-  const days = getViewDays(anchor, viewMode)
-  const DAY_WIDTH = DAY_WIDTH_MAP[viewMode]
+  const days = useMemo(
+    () => eachDayOfInterval({ start: baseDate, end: addDays(baseDate, totalDays - 1) }),
+    [baseDate, totalDays]
+  )
+
+  // Drag-to-scroll state
+  const isDragging = useRef(false)
+  const dragStartX = useRef(0)
+  const dragStartScrollLeft = useRef(0)
+  const didDrag = useRef(false)
+
+  function dateToScrollLeft(date: Date) {
+    return Math.max(0, differenceInCalendarDays(date, baseDate)) * DAY_WIDTH
+  }
+
+  // Scroll to today on mount
+  useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollLeft = dateToScrollLeft(new Date())
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  function handleScroll() {
+    if (!scrollRef.current) return
+    const offset = Math.floor(scrollRef.current.scrollLeft / DAY_WIDTH)
+    setVisibleDate(addDays(baseDate, offset))
+  }
+
+  function handleMouseDown(e: React.MouseEvent) {
+    if ((e.target as HTMLElement).closest('[data-block]')) return
+    isDragging.current = true
+    didDrag.current = false
+    dragStartX.current = e.pageX
+    dragStartScrollLeft.current = scrollRef.current?.scrollLeft ?? 0
+    e.preventDefault()
+  }
+
+  function handleMouseMove(e: React.MouseEvent) {
+    if (!isDragging.current || !scrollRef.current) return
+    const dx = e.pageX - dragStartX.current
+    if (Math.abs(dx) > 3) didDrag.current = true
+    scrollRef.current.scrollLeft = dragStartScrollLeft.current - dx
+  }
+
+  function handleMouseUp() {
+    isDragging.current = false
+  }
 
   const filteredPeople = people.filter((p) => {
     const passRole = !roleFilter || p.role.split(',').map((r) => r.trim()).includes(roleFilter)
@@ -127,14 +175,20 @@ export default function Timeline({ people, projects, allocations, timeOffs, onRe
     setOooModal({ open: true, timeOff: t })
   }
 
-  const stepWeeks = viewMode === 'week' ? 1 : viewMode === '3weeks' ? 3 : viewMode === 'month' ? 4 : 13
-
   function navigatePrev() {
-    setAnchor((a) => subWeeks(a, stepWeeks))
+    if (scrollRef.current) scrollRef.current.scrollLeft -= 7 * DAY_WIDTH
   }
 
   function navigateNext() {
-    setAnchor((a) => addWeeks(a, stepWeeks))
+    if (scrollRef.current) scrollRef.current.scrollLeft += 7 * DAY_WIDTH
+  }
+
+  function scrollToToday() {
+    if (scrollRef.current) scrollRef.current.scrollLeft = dateToScrollLeft(new Date())
+  }
+
+  function handleMonthChange(date: Date) {
+    if (scrollRef.current) scrollRef.current.scrollLeft = dateToScrollLeft(date)
   }
 
   // Group days into months for header
@@ -160,7 +214,7 @@ export default function Timeline({ people, projects, allocations, timeOffs, onRe
             </svg>
           </button>
           <button
-            onClick={() => setAnchor(new Date())}
+            onClick={scrollToToday}
             className="px-2.5 py-1 text-xs font-medium text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 rounded transition"
           >
             Dziś
@@ -175,7 +229,7 @@ export default function Timeline({ people, projects, allocations, timeOffs, onRe
           </button>
         </div>
 
-        <MonthPicker anchor={anchor} onChange={setAnchor} />
+        <MonthPicker anchor={visibleDate} onChange={handleMonthChange} />
 
         <PeopleFilter
           people={people}
@@ -219,21 +273,6 @@ export default function Timeline({ people, projects, allocations, timeOffs, onRe
         </div>
 
         <div className="ml-auto flex items-center gap-2">
-          <div className="flex items-center gap-1 bg-slate-800 p-0.5 rounded-lg">
-            {(['week', '3weeks', 'month', 'quarter'] as ViewMode[]).map((m) => (
-              <button
-                key={m}
-                onClick={() => setViewMode(m)}
-                className={cn(
-                  'px-3 py-1.5 text-xs font-medium rounded-md transition',
-                  viewMode === m ? 'bg-slate-600 text-white' : 'text-slate-400 hover:text-white'
-                )}
-              >
-                {m === 'week' ? 'Tydzień' : m === '3weeks' ? '3 tyg.' : m === 'month' ? 'Miesiąc' : 'Kwartał'}
-              </button>
-            ))}
-          </div>
-
           <button
             onClick={() => setOooModal({ open: true })}
             className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-200 text-sm font-medium rounded-lg transition"
@@ -261,7 +300,7 @@ export default function Timeline({ people, projects, allocations, timeOffs, onRe
         <div className="w-56 shrink-0 border-r border-slate-800 overflow-y-auto overflow-x-hidden bg-slate-950">
           <div className="h-[56px] border-b border-slate-800 px-4 flex items-end pb-1">
             <span className="text-xs text-slate-500 font-medium">
-              ZESPÓŁ {roleFilter && `· ${filteredPeople.length}`}
+              ZESPÓŁ {(roleFilter || selectedPeopleIds.length > 0) && `· ${filteredPeople.length}`}
             </span>
           </div>
           {rowData.map(({ person, personAllocs, personOffs, rowHeight }) => {
@@ -312,7 +351,16 @@ export default function Timeline({ people, projects, allocations, timeOffs, onRe
         </div>
 
         {/* Right: timeline grid */}
-        <div ref={scrollRef} className="flex-1 overflow-auto">
+        <div
+          ref={scrollRef}
+          className="flex-1 overflow-auto"
+          style={{ cursor: isDragging.current ? 'grabbing' : 'grab' }}
+          onScroll={handleScroll}
+          onMouseDown={handleMouseDown}
+          onMouseMove={handleMouseMove}
+          onMouseUp={handleMouseUp}
+          onMouseLeave={handleMouseUp}
+        >
           <div
             className="sticky top-0 z-10 bg-slate-950 border-b border-slate-800"
             style={{ width: days.length * DAY_WIDTH }}
@@ -372,7 +420,7 @@ export default function Timeline({ people, projects, allocations, timeOffs, onRe
                 return (
                   <div
                     key={day.toISOString()}
-                    onClick={() => !weekend && openCreate(person.id, format(day, 'yyyy-MM-dd'))}
+                    onClick={() => !weekend && !didDrag.current && openCreate(person.id, format(day, 'yyyy-MM-dd'))}
                     className={cn(
                       'h-full border-r border-slate-800 shrink-0',
                       weekend
@@ -398,7 +446,8 @@ export default function Timeline({ people, projects, allocations, timeOffs, onRe
                   return (
                     <div
                       key={`ooo-${item.id}`}
-                      onClick={(e) => { e.stopPropagation(); openEditOoo(item) }}
+                      data-block
+                      onClick={(e) => { e.stopPropagation(); if (!didDrag.current) openEditOoo(item) }}
                       className="absolute rounded cursor-pointer flex items-center px-2 gap-1 overflow-hidden hover:opacity-80 transition-opacity"
                       style={{
                         left, width, top: topOffset, height: LANE_HEIGHT,
@@ -421,7 +470,8 @@ export default function Timeline({ people, projects, allocations, timeOffs, onRe
                 return (
                   <div
                     key={`alloc-${item.id}`}
-                    onClick={(e) => { e.stopPropagation(); openEdit(item) }}
+                    data-block
+                    onClick={(e) => { e.stopPropagation(); if (!didDrag.current) openEdit(item) }}
                     className="absolute rounded cursor-pointer flex items-center px-2 overflow-hidden hover:opacity-90 transition-opacity"
                     style={{
                       left, width, top: topOffset, height: LANE_HEIGHT,
